@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Encryption/Decryption Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        .container { max-width: 500px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 5px; }
+        button { padding: 10px 20px; margin: 5px; }
+        input[type="file"], input[type="password"] { margin: 10px 0; padding: 5px; }
+        #status { color: #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>File Encryption/Decryption Tool</h2>
+        <input type="file" id="fileInput" accept=".enc,*">
+        <br>
+        <input type="password" id="passwordInput" placeholder="Enter password">
+        <br>
+        <button onclick="encryptFile()">Encrypt</button>
+        <button onclick="decryptFile()">Decrypt</button>
+        <p id="status"></p>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const passwordInput = document.getElementById('passwordInput');
+        const status = document.getElementById('status');
+
+        async function deriveKey(password, salt) {
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]
+            );
+            const key = await crypto.subtle.deriveBits(
+                {
+                    name: "PBKDF2",
+                    salt: salt,
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                256
+            );
+            return key;
+        }
+
+        async function encryptFile() {
+            const file = fileInput.files[0];
+            const password = passwordInput.value;
+            if (!file || !password) {
+                status.textContent = "Please select a file and enter a password.";
+                return;
+            }
+
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const key = await deriveKey(password, salt);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["encrypt"]);
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const plaintext = e.target.result;
+                const encrypted = await crypto.subtle.encrypt(
+                    { name: "AES-GCM", iv: iv }, cryptoKey, plaintext
+                );
+                const blob = new Blob([salt, iv, new Uint8Array(encrypted)]);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name + '.enc';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                status.textContent = "File encrypted successfully!";
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function decryptFile() {
+            const file = fileInput.files[0];
+            const password = passwordInput.value;
+            if (!file || !password) {
+                status.textContent = "Please select a file and enter a password.";
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const arrayBuffer = e.target.result;
+                const data = new Uint8Array(arrayBuffer);
+                const salt = data.slice(0, 16);
+                const iv = data.slice(16, 28);
+                const encrypted = data.slice(28);
+
+                const key = await deriveKey(password, salt);
+                const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["decrypt"]);
+
+                try {
+                    const decrypted = await crypto.subtle.decrypt(
+                        { name: "AES-GCM", iv: iv }, cryptoKey, encrypted
+                    );
+                    const blob = new Blob([decrypted]);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = file.name.replace('.enc', '');
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    status.textContent = "File decrypted successfully!";
+                } catch (e) {
+                    status.textContent = "Decryption failed. Invalid password or tampered file.";
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>
